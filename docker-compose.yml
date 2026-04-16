@@ -1,0 +1,106 @@
+services:
+  app:
+    build:
+      args:
+        user: developer
+        uid: 1000
+      context: ./
+      dockerfile: Dockerfile
+    image: laravel-app
+    container_name: laravel-app-rx
+    restart: unless-stopped
+    working_dir: /var/www/
+    volumes:
+      - ./:/var/www
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_DATABASE: ${DOCKER_DB_DATABASE:-books}
+      DB_USERNAME: ${DOCKER_DB_USERNAME:-sail}
+      DB_PASSWORD: ${DOCKER_DB_PASSWORD:-password}
+    networks:
+      - laravel
+
+  db:
+    image: mysql:8.0
+    container_name: laravel-mysql-rx
+    restart: unless-stopped
+    ports:
+      - "3318:3306"
+    environment:
+      MYSQL_DATABASE: ${DOCKER_DB_DATABASE:-books}
+      MYSQL_ROOT_PASSWORD: ${DOCKER_DB_ROOT_PASSWORD:-rootpass}
+      MYSQL_PASSWORD: ${DOCKER_DB_PASSWORD:-password}
+      MYSQL_USER: ${DOCKER_DB_USERNAME:-sail}
+    volumes:
+      - ./docker-compose/mysql/data:/var/lib/mysql
+      - ./docker-compose/mysql/logs:/var/log/mysql
+    networks:
+      - laravel
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-p${DB_PASSWORD:-password}"]
+      retries: 3
+      timeout: 5s
+
+  nginx:
+    image: nginx:alpine
+    container_name: laravel-nginx-rx
+    restart: unless-stopped
+    ports:
+      - "8025:80"
+    volumes:
+      - ./:/var/www
+      - ./docker-compose/nginx:/etc/nginx/conf.d
+    depends_on:
+      - app
+    networks:
+      - laravel
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin:latest
+    container_name: laravel-phpmyadmin-rx
+    ports:
+      - "8013:80"
+    restart: unless-stopped
+    environment:
+      PMA_HOST: db
+      PMA_PORT: 3306
+      PMA_ARBITRARY: 1
+    depends_on:
+      - db
+    networks:
+      - laravel
+
+  redis:
+    image: redis:alpine
+    container_name: laravel-redis-rx
+    restart: unless-stopped
+    volumes:
+      - ./docker-compose/redis/data:/data
+    ports:
+      - "16381:6379"
+    networks:
+      - laravel
+
+  node:
+    image: node:22-alpine
+    container_name: laravel-r-nodex
+    working_dir: /var/www
+    volumes:
+      - ./:/var/www
+    ports:
+      - "5155:5173"
+    command: sh -lc "npm ci && npm run dev -- --host 0.0.0.0 --port 5173"
+    depends_on:
+      - app
+    networks:
+      - laravel
+
+networks:
+  laravel:
+    driver: bridge
