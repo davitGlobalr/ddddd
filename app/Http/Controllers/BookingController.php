@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Book;
 use App\Models\Booking;
 use App\Models\User;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -12,7 +13,7 @@ use Illuminate\Validation\ValidationException;
 
 class BookingController extends Controller
 {
-    public function store(Request $request): RedirectResponse
+    public function store(Request $request): RedirectResponse|JsonResponse
     {
         $validated = $request->validate([
             'book_id' => ['required', 'integer', 'exists:books,id'],
@@ -25,7 +26,7 @@ class BookingController extends Controller
         $bookId = (int) $validated['book_id'];
         $quantity = (int) $validated['quantity'];
 
-        DB::transaction(function () use ($user, $bookId, $quantity): void {
+        $remainingQuantity = DB::transaction(function () use ($user, $bookId, $quantity): int {
             $book = Book::query()
                 ->whereKey($bookId)
                 ->lockForUpdate()
@@ -58,7 +59,18 @@ class BookingController extends Controller
                 'book_id' => $bookId,
                 'status' => '1',
             ]);
+
+            return (int) $book->quntity;
         });
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Booking created successfully.',
+                'book_id' => $bookId,
+                'remaining_quantity' => $remainingQuantity,
+            ]);
+        }
 
         return redirect()
             ->back()

@@ -2,11 +2,13 @@
 
 @section('content')
 <div class="container">
-    @if (session('status'))
-        <div class="alert alert-success mb-4" role="alert">
-            {{ session('status') }}
-        </div>
-    @endif
+    <div id="booking-ajax-alert">
+        @if (session('status'))
+            <div class="alert alert-success mb-4" role="alert">
+                {{ session('status') }}
+            </div>
+        @endif
+    </div>
 
     <div class="row row-cols-1 row-cols-md-3 g-4">
         @foreach ($books as $book)
@@ -36,7 +38,7 @@
 
                         <div class="mt-auto">
                             <div class="d-flex justify-content-between align-items-center mb-3">
-                                <span class="badge bg-secondary">
+                                <span class="badge bg-secondary js-stock-badge">
                                     В наличии: {{ (int) $book->quntity }}
                                 </span>
                                 @if (! $inStock)
@@ -49,6 +51,7 @@
                                     method="POST"
                                     action="{{ route('booking.store') }}"
                                     class="booking-form"
+                                    data-book-id="{{ $book->id }}"
                                 >
                                     @csrf
                                     <input type="hidden" name="book_id" value="{{ $book->id }}">
