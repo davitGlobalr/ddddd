@@ -1,58 +1,214 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Books Booking (Laravel)
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Приложение для бронирования книг с ролями пользователей, админ-панелью, событиями и очередями.
 
-## About Laravel
+## О чем проект
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+- Каталог книг на главной странице (`/`, `/home`) с пагинацией.
+- Клиент создает бронирование книги (`/booking`).
+- Админ-страница бронирований (`/admin/bookings`) с поиском, пагинацией и изменением статуса.
+- Ролевая модель на `spatie/laravel-permission`:
+  - `superadmin`
+  - `manager`
+  - `customer`
+- Права:
+  - `booking.create`
+  - `booking.updateStatus`
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## Основные сущности
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+- `books`:
+  - `name`, `author`, `description`, `quntity`, `img`, `price`
+- `booking`:
+  - `user_id`, `book_id`, `status`, timestamps
 
-## Learning Laravel
+### Статусы booking
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+В проекте статусы хранятся строками:
 
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+- `1` - pending
+- `2` - approved
+- `3` - cancelled
 
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
+## Архитектура процессов
 
-## Agentic Development
+### 1) Создание брони
 
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
+Контроллер `BookingController@store`:
+
+1. Валидирует `book_id` и `quantity`.
+2. В транзакции:
+   - блокирует книгу (`lockForUpdate`);
+   - проверяет остаток;
+   - проверяет, нет ли уже pending-брони у этого пользователя на эту книгу;
+   - уменьшает `books.quntity`;
+   - создает запись в `booking` со статусом `1`.
+3. Диспатчит событие `ReservationCreated`.
+4. Возвращает JSON (для AJAX) или redirect.
+
+### 2) Event -> Listener -> Notification
+
+- Event: `App\Events\ReservationCreated`
+- Listener: `App\Listeners\SendReservationCreatedNotifications` (`ShouldQueue`)
+- Notification: `App\Notifications\ReservationCreatedNotification`
+
+При создании брони слушатель:
+
+- отправляет email пользователю;
+- отправляет email всем пользователям с ролями `superadmin` и `manager` (кроме автора брони).
+
+Так как listener очередной (`ShouldQueue`), для отправки уведомлений должен работать worker.
+
+### 3) Scheduler (авто-отмена pending)
+
+- Команда: `booking:expire-pending`
+- Класс: `App\Console\Commands\ExpirePendingBookings`
+- Расписание: `routes/console.php` -> `everyMinute()`
+
+Команда переводит старые pending-записи в cancelled.
+
+## Быстрый запуск через Docker
+
+### Требования
+
+- Docker + Docker Compose
+
+### 1. Подготовка окружения
 
 ```bash
-composer require laravel/boost --dev
-
-php artisan boost:install
+cp .env.example .env
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+### 2. Запуск контейнеров
 
-## Contributing
+```bash
+docker compose up -d --build
+```
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+Сервисы из `docker-compose.yml`:
 
-## Code of Conduct
+- `app` (php-fpm / Laravel)
+- `nginx` (HTTP)
+- `db` (MySQL 8)
+- `redis`
+- `phpmyadmin`
+- `node` (Vite dev server)
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+### 3. Установка зависимостей и ключ приложения
 
-## Security Vulnerabilities
+```bash
+docker compose exec app composer install
+docker compose exec app php artisan key:generate
+```
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+### 4. Миграции и сиды
 
-## License
+```bash
+docker compose exec app php artisan migrate --seed
+```
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+Сиды создают:
+
+- роли и permissions (`RolePermissionSeeder`);
+- 30 книг (`BooksSeeder`);
+- тестового пользователя `test@example.com` (`DatabaseSeeder`).
+
+### 5. Фронтенд
+
+Если контейнер `node` не поднят:
+
+```bash
+docker compose run --rm node sh -lc "npm ci && npm run dev -- --host 0.0.0.0 --port 5173"
+```
+
+## URL и доступы
+
+- Приложение: `http://localhost:8025`
+- phpMyAdmin: `http://localhost:8013`
+- MySQL порт на хосте: `3318`
+- Redis порт на хосте: `16381`
+
+## Как запускать очереди и шедулер
+
+### Очередь (worker)
+
+В `.env.example` используется `QUEUE_CONNECTION=database`, значит нужен воркер:
+
+```bash
+docker compose exec app php artisan queue:work --tries=1
+```
+
+Для разового прогона одного задания:
+
+```bash
+docker compose exec app php artisan queue:work --once --tries=1
+```
+
+После изменений кода listener/notification перезапускайте воркеры:
+
+```bash
+docker compose exec app php artisan queue:restart
+```
+
+### Scheduler
+
+Локально обычно запускается отдельным процессом:
+
+```bash
+docker compose exec app php artisan schedule:work
+```
+
+Либо ручной запуск проверки расписания:
+
+```bash
+docker compose exec app php artisan schedule:run
+```
+
+## Как проверить, что все работает
+
+### Проверка бронирования
+
+1. Откройте главную страницу, создайте бронь.
+2. Убедитесь, что запись появилась в таблице `booking`.
+3. Убедитесь, что количество книги уменьшилось в `books.quntity`.
+
+### Проверка event/listener/queue
+
+1. Создайте бронь.
+2. Проверьте очередь:
+   ```bash
+   docker compose exec app php artisan tinker --execute 'echo DB::table("jobs")->count();'
+   ```
+3. Запустите worker (`queue:work`).
+4. Проверьте логи:
+   ```bash
+   docker compose exec app tail -n 200 storage/logs/laravel.log
+   ```
+   Ищите записи:
+   - `booking.created`
+   - `booking.reservation_created_event_dispatched`
+   - `booking.reservation_created_listener_started`
+   - `booking.reservation_created_listener_finished`
+
+### Проверка scheduler
+
+1. Создайте pending-бронирование.
+2. Запустите:
+   ```bash
+   docker compose exec app php artisan booking:expire-pending
+   ```
+3. Проверьте, что статус поменялся на `3`.
+
+## Полезные команды
+
+```bash
+docker compose ps
+docker compose logs -f app
+docker compose exec app php artisan optimize:clear
+docker compose exec app php artisan test --compact
+```
+
+## Примечания
+
+- У проекта есть отдельные логи для отладки процесса бронирования и нотификаций.
+- Если изменения в фронтенде не видны, проверьте что Vite/`node` сервис запущен.
