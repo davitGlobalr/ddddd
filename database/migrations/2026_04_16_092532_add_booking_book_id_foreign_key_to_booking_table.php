@@ -11,6 +11,14 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (! Schema::hasTable('booking') || ! Schema::hasColumn('booking', 'book_id')) {
+            return;
+        }
+
+        if (Schema::getConnection()->getDriverName() === 'sqlite') {
+            return;
+        }
+
         Schema::table('booking', function (Blueprint $table) {
             $table->index('book_id', 'booking_book_id_index');
 
@@ -26,6 +34,10 @@ return new class extends Migration
      */
     public function down(): void
     {
+        if (! Schema::hasTable('booking') || Schema::getConnection()->getDriverName() === 'sqlite') {
+            return;
+        }
+
         Schema::table('booking', function (Blueprint $table) {
             $table->dropForeign('booking_book_id_foreign');
             $table->dropIndex('booking_book_id_index');
